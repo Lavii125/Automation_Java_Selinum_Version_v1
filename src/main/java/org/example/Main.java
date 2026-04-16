@@ -1,80 +1,128 @@
 package org.example;
 
-import org.openqa.selenium.By;
-import org.openqa.selenium.JavascriptExecutor;
-import org.openqa.selenium.WebDriver;
-import org.openqa.selenium.WebElement;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.openqa.selenium.*;
 import org.openqa.selenium.edge.EdgeDriver;
 import org.openqa.selenium.edge.EdgeOptions;
+import org.openqa.selenium.interactions.Actions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.time.Duration;
 
 public class Main {
     public static void main(String[] args) {
+        String excelPath = "C:\\Users\\ttc1986\\IdeaProjects\\Automation_Java_Selinum\\coupons.xlsx";
+        String myUsername = "xyz@kroger.com";
+        String myPassword = "pass";
 
-        // 1. Manually point to your driver
         System.setProperty("webdriver.edge.driver", "msedgedriver.exe");
 
         EdgeOptions options = new EdgeOptions();
         options.addArguments("--start-maximized");
-        // Helps prevent the browser from being detected as a bot by some corporate firewalls
         options.addArguments("--disable-blink-features=AutomationControlled");
+        options.setExperimentalOption("excludeSwitches", new String[]{"enable-automation"});
+        options.addArguments("--remote-allow-origins=*");
 
         WebDriver driver = new EdgeDriver(options);
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(30));
+        JavascriptExecutor js = (JavascriptExecutor) driver;
+        Actions actions = new Actions(driver);
 
         try {
-            // 2. Navigate to Kroger
-            System.out.println("Navigating... PLEASE ENTER PROXY CREDENTIALS NOW.");
-            driver.get("https://www.kroger.com");
+            // --- 1. OLD RELIABLE LOGIN SECTION ---
+            driver.get("https://www.kroger.com/signin");
+            System.out.println("Executing high-reliability login...");
 
-            // 3. Setup a long wait for the initial proxy/page load
-            WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(90));
-            JavascriptExecutor js = (JavascriptExecutor) driver;
+            // Find Email Field
+            By emailLoc = By.xpath("//input[@id='signInName' or @name='email' or @type='email']");
+            WebElement emailInput = wait.until(ExpectedConditions.elementToBeClickable(emailLoc));
 
-            // 4. THE POP-UP CLOSE LOGIC (Using JavaScript)
-            System.out.println("Attempting to clear the pop-up...");
-            try {
-                // Wait for the button to exist in the DOM
-                By closeBtnPath = By.xpath("//button[@aria-label='Close pop-up']");
-                WebElement closeButton = wait.until(ExpectedConditions.presenceOfElementLocated(closeBtnPath));
+            // Force focus and type using Actions
+            actions.moveToElement(emailInput).click().perform();
+            Thread.sleep(1000);
+            emailInput.sendKeys(myUsername);
 
-                // Force a JavaScript click
-                js.executeScript("arguments[0].click();", closeButton);
-                System.out.println("Pop-up closed via JavaScript.");
-
-                // Ensure the pop-up is gone before proceeding
-                wait.until(ExpectedConditions.invisibilityOfElementLocated(closeBtnPath));
-            } catch (Exception e) {
-                System.out.println("Pop-up button not clickable or didn't appear. Proceeding to main content.");
+            // JS Fallback for Username if SendKeys failed
+            if (emailInput.getAttribute("value").isEmpty()) {
+                js.executeScript("arguments[0].value='" + myUsername + "';", emailInput);
+                js.executeScript("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", emailInput);
             }
 
-            // 5. THE MAIN ACTION: Click Digital Coupons
-            System.out.println("Locating and clicking Digital Coupons...");
+            // Find and type Password
+            By passLoc = By.xpath("//input[@type='password']");
+            WebElement passwordInput = wait.until(ExpectedConditions.presenceOfElementLocated(passLoc));
+            actions.moveToElement(passwordInput).click().perform();
+            Thread.sleep(500);
+            passwordInput.sendKeys(myPassword);
 
-            // Using the data-testid from your HTML
-            By couponsPath = By.xpath("//li[@data-testid='MarqueeLinks-Digital Coupons']/a");
-            WebElement digitalCouponsLink = wait.until(ExpectedConditions.elementToBeClickable(couponsPath));
+            // JS Fallback for Password
+            if (passwordInput.getAttribute("value").isEmpty()) {
+                js.executeScript("arguments[0].value='" + myPassword + "';", passwordInput);
+                js.executeScript("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", passwordInput);
+            }
 
-            // Again, use JS click here just in case another pop-up/overlay is in the way
-            js.executeScript("arguments[0].click();", digitalCouponsLink);
+            System.out.println("Credentials entered via JS/Actions. Clicking Sign In...");
+            Thread.sleep(2000);
 
-            System.out.println("Successfully clicked 'Digital Coupons'!");
+            // Use the "Continue" or "Sign In" button by ID or text
+            WebElement submitBtn = wait.until(ExpectedConditions.elementToBeClickable(By.id("continue")));
+            js.executeScript("arguments[0].click();", submitBtn);
 
-            // 6. Verify URL change
-            wait.until(ExpectedConditions.urlContains("coupons"));
-            System.out.println("Automation complete. Current URL: " + driver.getCurrentUrl());
+            // Wait for login to complete (important for SPA apps)
+            Thread.sleep(8000);
 
-            // Stay open so you can see the result
-            Thread.sleep(10000);
+            // --- 2. EXCEL PROCESSING SECTION (Columns D and F) ---
+            System.out.println("Opening Excel file...");
+            FileInputStream fis = new FileInputStream(new File(excelPath));
+            Workbook workbook = new XSSFWorkbook(fis);
+            Sheet sheet = workbook.getSheetAt(0);
+            DataFormatter formatter = new DataFormatter();
+
+            int urlColIndex = 3;    // Column D
+            int statusColIndex = 5; // Column F
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+
+                String couponUrl = formatter.formatCellValue(row.getCell(urlColIndex)).trim();
+
+                if (couponUrl.isEmpty() || !couponUrl.startsWith("http")) {
+                    System.out.println("Row " + (i + 1) + ": Skipping (No valid URL)");
+                    continue;
+                }
+
+                System.out.println("Row " + (i + 1) + ": Navigating to " + couponUrl);
+                driver.get(couponUrl);
+
+                // Wait for the specific "unavailable" message
+                Thread.sleep(4000);
+                boolean isUnavailable = driver.findElements(By.xpath("//h4[contains(text(), 'unavailable') or contains(text(), 'not found')]")).size() > 0;
+
+                Cell statusCell = row.getCell(statusColIndex, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
+                String result = isUnavailable ? "N" : "Y";
+                statusCell.setCellValue(result);
+                System.out.println("   -> Result: " + result);
+            }
+
+            // --- 3. SAVE AND EXIT ---
+            fis.close();
+            try (FileOutputStream fos = new FileOutputStream(new File(excelPath))) {
+                workbook.write(fos);
+                System.out.println("\nSUCCESS! Excel file updated at: " + excelPath);
+            }
+            workbook.close();
 
         } catch (Exception e) {
-            System.err.println("Automation failed during the process.");
+            System.err.println("An error occurred:");
             e.printStackTrace();
         } finally {
-            // driver.quit(); // Keep open for manual review
-            System.out.println("Script ended. Browser is still active.");
+            driver.quit();
         }
     }
 }
